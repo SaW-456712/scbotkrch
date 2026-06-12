@@ -109,9 +109,12 @@ async def download_soundcloud_track(url: str, message: types.Message) -> str | N
     logger.info(f"PATH = {os.environ.get('PATH')}")
     logger.info(f"ffmpeg = {shutil.which('ffmpeg')}")
     logger.info(f"ffprobe = {shutil.which('ffprobe')}")
-    outtmpl = f"{temp_dir}/%(id)s.%(ext)s"
-    logger.info(f"ffmpeg = {shutil.which('ffmpeg')}")
-    logger.info(f"ffprobe = {shutil.which('ffprobe')}")
+    temp_dir = tempfile.mkdtemp()
+
+    outtmpl = os.path.join(
+        temp_dir,
+        "%(id)s.%(ext)s"
+    )
     
     ydl_opts = {
         'format': 'bestaudio/best',
