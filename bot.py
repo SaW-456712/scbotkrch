@@ -103,7 +103,7 @@ async def download_soundcloud_track(url: str, message: types.Message) -> str | N
     logger.info("Downloading track")
 
     import shutil
-    
+    outtmpl = f"{temp_dir}/%(id)s.%(ext)s"
     logger.info(f"ffmpeg = {shutil.which('ffmpeg')}")
     logger.info(f"ffprobe = {shutil.which('ffprobe')}")
     
