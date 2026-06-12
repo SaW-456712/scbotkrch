@@ -103,18 +103,18 @@ async def download_soundcloud_track(url: str, message: types.Message) -> str | N
     logger.info("Downloading track")
 
     import shutil
-
+    
     logger.info(f"ffmpeg = {shutil.which('ffmpeg')}")
     logger.info(f"ffprobe = {shutil.which('ffprobe')}")
-
-    outtmpl = os.path.join(DOWNLOADS_DIR, '%(title)s.%(ext)s')
-
+    
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': outtmpl,
         'noplaylist': True,
         'quiet': True,
+    
         'ffmpeg_location': '/usr/bin',
+    
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
