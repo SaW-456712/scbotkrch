@@ -111,10 +111,11 @@ async def download_soundcloud_track(url: str, message: types.Message) -> str | N
         'outtmpl': outtmpl,
         'noplaylist': True,
         'quiet': True,
+        'ffmpeg_location': '/usr/bin',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
-            'preferredquality': '320', # Пункт 9 ТЗ
+            'preferredquality': '0',
         }],
     }
 
