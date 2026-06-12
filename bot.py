@@ -1,8 +1,9 @@
 import os
-import tempfile
 import json
 import logging
 import asyncio
+import tempfile
+import shutil
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
@@ -29,8 +30,9 @@ BTN_YES = "✅ Да"
 BTN_NEXT = "➡️ Следующий"
 BTN_CANCEL = "❌ Отмена"
 
-STATS_FILE = "stats.json"
-DOWNLOADS_DIR = "downloads"
+# Работа с путями Docker Volume (из вашего Dockerfile)
+DATA_DIR = os.getenv('DATA_DIR', '/app/data')
+STATS_FILE = os.path.join(DATA_DIR, "stats.json")
 MAX_DURATION = 1800  # 30 минут в секундах
 
 # ==============================================================================
@@ -46,7 +48,7 @@ if not TOKEN:
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
-os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
 
 # ==============================================================================
 # ФУНКЦИИ СТАТИСТИКИ (Пункт 14 ТЗ)
@@ -94,37 +96,26 @@ def get_search_buttons():
     builder.button(text=BTN_YES, callback_data="confirm")
     builder.button(text=BTN_NEXT, callback_data="next")
     builder.button(text=BTN_CANCEL, callback_data="cancel")
-    builder.adjust(2, 1) # Первые две кнопки в ряд, отмена на новой строке
+    builder.adjust(2, 1)
     return builder.as_markup()
 
 # ==============================================================================
 # СКАЧИВАНИЕ И ОБРАБОТКА (yt-dlp + ffmpeg)
 # ==============================================================================
-async def download_soundcloud_track(url: str, message: types.Message) -> str | None:
+async def download_soundcloud_track(url: str) -> str | None:
+    """Скачивает аудио, конвертирует в MP3 320kbps и переименовывает с сигнатурой"""
     logger.info("Downloading track")
-
-    import shutil
-    import os
-    import shutil
-
-    logger.info(f"PATH = {os.environ.get('PATH')}")
-    logger.info(f"ffmpeg = {shutil.which('ffmpeg')}")
-    logger.info(f"ffprobe = {shutil.which('ffprobe')}")
-    temp_dir = tempfile.mkdtemp()
-
-    outtmpl = os.path.join(
-        temp_dir,
-        "%(id)s.%(ext)s"
-    )
+    
+    temp_dir = tempfile.mkdtemp(dir=DATA_DIR)
+    # Используем стабильный шаблон без спецсимволов для yt-dlp
+    outtmpl = os.path.join(temp_dir, "%(id)s.%(ext)s")
     
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': outtmpl,
         'noplaylist': True,
         'quiet': True,
-    
         'ffmpeg_location': '/usr/bin',
-    
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
@@ -136,28 +127,31 @@ async def download_soundcloud_track(url: str, message: types.Message) -> str | N
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             logger.info("Converting to MP3")
             info = ydl.extract_info(url, download=True)
+            
+            # Получаем путь до скомпилированного mp3 файла
+            compiled_filename = ydl.prepare_filename(info)
+            mp3_path = compiled_filename.rsplit('.', 1)[0] + '.mp3'
+            
+            if not os.path.exists(mp3_path):
+                # Фолбэк на случай непредвиденного изменения расширения утилитой
+                files = [os.path.join(temp_dir, f) for f in os.listdir(temp_dir) if f.endswith('.mp3')]
+                if files:
+                    mp3_path = files[0]
+                else:
+                    raise FileNotFoundError("Конвертированный MP3 файл не найден.")
 
-            mp3_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp3'
-            
+            # Извлекаем оригинальное название для красивого сохранения файла
             title = info.get("title", "Unknown Track")
+            safe_title = "".join(c for c in title if c not in r'\/:*?"<>|').strip()
             
-            safe_title = "".join(
-                c for c in title
-                if c not in r'\/:*?"<>|'
-            )
-            
+            # Формируем новое имя с учетом FILE_SIGNATURE
             if FILE_SIGNATURE:
                 new_name = f"{safe_title}{FILE_SIGNATURE}.mp3"
             else:
                 new_name = f"{safe_title}.mp3"
-            
-            new_path = os.path.join(
-                os.path.dirname(mp3_path),
-                new_name
-            )
-            
+                
+            new_path = os.path.join(temp_dir, new_name)
             os.rename(mp3_path, new_path)
-            
             return new_path
 
     try:
@@ -166,6 +160,9 @@ async def download_soundcloud_track(url: str, message: types.Message) -> str | N
         return file_path
     except Exception as e:
         logger.error(f"Ошибка при скачивании: {e}")
+        # Зачищаем папку в случае падения
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
         return None
 
 # ==============================================================================
@@ -184,7 +181,6 @@ async def show_records(message: types.Message):
     users_count = len(stats.get("users", []))
     downloads_count = stats.get("downloads", 0)
     
-    # Пункт 13 ТЗ
     text = (
         f"📊 Статистика\n\n"
         f"👥 Пользователей: {users_count}\n\n"
@@ -216,21 +212,20 @@ async def handle_soundcloud_link(message: types.Message):
         return
 
     duration = info.get('duration', 0)
-    if duration > MAX_DURATION: # Пункт 10 ТЗ
+    if duration and duration > MAX_DURATION:
         await status_msg.edit_text(TXT_TOO_LONG)
         return
 
     await status_msg.edit_text(TXT_PROCESSING)
     
-    file_path = await download_soundcloud_track(url, message)
+    file_path = await download_soundcloud_track(url)
     if not file_path or not os.path.exists(file_path):
         await status_msg.edit_text(TXT_ERROR)
         return
 
-    # Отправка файла (Пункт 11, 12 ТЗ)
     try:
         caption = FILE_SIGNATURE if FILE_SIGNATURE else None
-        audio_file = types.FSInputFile(file_path)
+        audio_file = types.FSInputFile(file_path, filename=os.path.basename(file_path))
         await message.answer_audio(audio=audio_file, caption=caption)
         logger.info("File sent")
         track_download()
@@ -239,20 +234,21 @@ async def handle_soundcloud_link(message: types.Message):
         logger.error(f"Ошибка отправки файла: {e}")
         await status_msg.edit_text(TXT_ERROR)
     finally:
-        # Автоматическое удаление (Пункт 15 ТЗ)
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        if file_path and os.path.exists(os.path.dirname(file_path)):
+            shutil.rmtree(os.path.dirname(file_path), ignore_errors=True)
 
 # Обработка текстовых поисковых запросов (Пункт 4, 5 ТЗ)
 @dp.message(F.text)
 async def handle_search_query(message: types.Message, state: FSMContext):
+    if message.text in [BTN_RECORDS, BTN_YES, BTN_NEXT, BTN_CANCEL]:
+        return
+
     track_user(message.from_user.id)
     query = message.text.strip()
     
     logger.info(f"Searching: {query}")
     status_msg = await message.answer(TXT_SEARCHING)
     
-    # Поиск до 15 результатов через scsearch
     ydl_opts = {
         'extract_flat': 'in_playlist', 
         'quiet': True,
@@ -279,7 +275,6 @@ async def handle_search_query(message: types.Message, state: FSMContext):
 
     logger.info(f"Found {len(entries)} results")
     
-    # Сохраняем результаты в FSM контекст
     await state.update_data(results=entries, current_index=0)
     await state.set_state(SearchStates.choosing_result)
     
@@ -309,25 +304,29 @@ async def process_confirm(callback: types.CallbackQuery, state: FSMContext):
         return
         
     track = results[index]
+    
+    # Для scsearch берем корректную прямую ссылку на трек из метаданных
     url = track.get("url") or track.get("webpage_url")
+    if url and not url.startswith("http"):
+        url = f"https://api.soundcloud.com/tracks/{url}" if track.get("id") else track.get("id")
+        
     duration = track.get("duration", 0)
     
-    # Уведомляем пользователя через изменение текста
     await callback.message.edit_text(TXT_PROCESSING)
-    await state.clear() # Сразу очищаем состояние
+    await state.clear()
     
     if duration and duration > MAX_DURATION:
         await callback.message.edit_text(TXT_TOO_LONG)
         return
 
-    file_path = await download_soundcloud_track(url, callback.message)
+    file_path = await download_soundcloud_track(url)
     if not file_path or not os.path.exists(file_path):
         await callback.message.edit_text(TXT_ERROR)
         return
 
     try:
         caption = FILE_SIGNATURE if FILE_SIGNATURE else None
-        audio_file = types.FSInputFile(file_path)
+        audio_file = types.FSInputFile(file_path, filename=os.path.basename(file_path))
         await callback.message.answer_audio(audio=audio_file, caption=caption)
         logger.info("File sent")
         track_download()
@@ -336,8 +335,8 @@ async def process_confirm(callback: types.CallbackQuery, state: FSMContext):
         logger.error(f"Ошибка отправки файла: {e}")
         await callback.message.edit_text(TXT_ERROR)
     finally:
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        if file_path and os.path.exists(os.path.dirname(file_path)):
+            shutil.rmtree(os.path.dirname(file_path), ignore_errors=True)
     
     await callback.answer()
 
