@@ -14,7 +14,8 @@ import yt_dlp
 # ==============================================================================
 # БЛОК НАСТРОЕК И ТЕКСТОВ (Пункт 12, 17 ТЗ)
 # ==============================================================================
-FILE_SIGNATURE = "_tg@zombie_music_bot"  # Подпись к файлу (оставьте "", если не нужна)
+# Здесь укажи юзернейм своего бота (обязательно с @), он будет в сообщении под треком
+FILE_SIGNATURE = "@test_cloude_zomb_bot"  
 
 TXT_START = "👋 Добро пожаловать!\n\n🎵 Отправьте ссылку SoundCloud или название трека.\n\nЯ найду музыку и отправлю её."
 TXT_SEARCHING = "🔎 Ищу трек..."
@@ -30,7 +31,7 @@ BTN_YES = "✅ Да"
 BTN_NEXT = "➡️ Следующий"
 BTN_CANCEL = "❌ Отмена"
 
-# Работа с путями Docker Volume (из вашего Dockerfile)
+# Работа с путями Docker Volume
 DATA_DIR = os.getenv('DATA_DIR', '/app/data')
 STATS_FILE = os.path.join(DATA_DIR, "stats.json")
 MAX_DURATION = 1800  # 30 минут в секундах
@@ -103,11 +104,10 @@ def get_search_buttons():
 # СКАЧИВАНИЕ И ОБРАБОТКА (yt-dlp + ffmpeg)
 # ==============================================================================
 async def download_soundcloud_track(url: str) -> str | None:
-    """Скачивает аудио, конвертирует в MP3 320kbps и переименовывает с сигнатурой"""
+    """Скачивает аудио, конвертирует в MP3 320kbps и переименовывает трек"""
     logger.info("Downloading track")
     
     temp_dir = tempfile.mkdtemp(dir=DATA_DIR)
-    # Используем стабильный шаблон без спецсимволов для yt-dlp
     outtmpl = os.path.join(temp_dir, "%(id)s.%(ext)s")
     
     ydl_opts = {
@@ -128,28 +128,21 @@ async def download_soundcloud_track(url: str) -> str | None:
             logger.info("Converting to MP3")
             info = ydl.extract_info(url, download=True)
             
-            # Получаем путь до скомпилированного mp3 файла
             compiled_filename = ydl.prepare_filename(info)
             mp3_path = compiled_filename.rsplit('.', 1)[0] + '.mp3'
             
             if not os.path.exists(mp3_path):
-                # Фолбэк на случай непредвиденного изменения расширения утилитой
                 files = [os.path.join(temp_dir, f) for f in os.listdir(temp_dir) if f.endswith('.mp3')]
                 if files:
                     mp3_path = files[0]
                 else:
                     raise FileNotFoundError("Конвертированный MP3 файл не найден.")
 
-            # Извлекаем оригинальное название для красивого сохранения файла
             title = info.get("title", "Unknown Track")
             safe_title = "".join(c for c in title if c not in r'\/:*?"<>|').strip()
             
-            # Формируем новое имя с учетом FILE_SIGNATURE
-            if FILE_SIGNATURE:
-                new_name = f"{safe_title}{FILE_SIGNATURE}.mp3"
-            else:
-                new_name = f"{safe_title}.mp3"
-                
+            # Файл сохраняем с красивым оригинальным именем
+            new_name = f"{safe_title}.mp3"
             new_path = os.path.join(temp_dir, new_name)
             os.rename(mp3_path, new_path)
             return new_path
@@ -160,7 +153,6 @@ async def download_soundcloud_track(url: str) -> str | None:
         return file_path
     except Exception as e:
         logger.error(f"Ошибка при скачивании: {e}")
-        # Зачищаем папку в случае падения
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
         return None
@@ -224,7 +216,10 @@ async def handle_soundcloud_link(message: types.Message):
         return
 
     try:
-        caption = FILE_SIGNATURE if FILE_SIGNATURE else None
+        # Формируем текст подписи: Название трека + кликабельная ссылка на бота
+        track_name = os.path.basename(file_path).rsplit('.', 1)[0]
+        caption = f"🎵 {track_name}\n\n🤖 Скачано с помощью: {FILE_SIGNATURE}"
+        
         audio_file = types.FSInputFile(file_path, filename=os.path.basename(file_path))
         await message.answer_audio(audio=audio_file, caption=caption)
         logger.info("File sent")
@@ -304,8 +299,6 @@ async def process_confirm(callback: types.CallbackQuery, state: FSMContext):
         return
         
     track = results[index]
-    
-    # Для scsearch берем корректную прямую ссылку на трек из метаданных
     url = track.get("url") or track.get("webpage_url")
     if url and not url.startswith("http"):
         url = f"https://api.soundcloud.com/tracks/{url}" if track.get("id") else track.get("id")
@@ -325,7 +318,10 @@ async def process_confirm(callback: types.CallbackQuery, state: FSMContext):
         return
 
     try:
-        caption = FILE_SIGNATURE if FILE_SIGNATURE else None
+        # Формируем текст подписи для инлайн-поиска
+        track_name = os.path.basename(file_path).rsplit('.', 1)[0]
+        caption = f"🎵 {track_name}\n\n🤖 Скачано с помощью: {FILE_SIGNATURE}"
+        
         audio_file = types.FSInputFile(file_path, filename=os.path.basename(file_path))
         await callback.message.answer_audio(audio=audio_file, caption=caption)
         logger.info("File sent")
