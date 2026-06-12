@@ -100,12 +100,15 @@ def get_search_buttons():
 # СКАЧИВАНИЕ И ОБРАБОТКА (yt-dlp + ffmpeg)
 # ==============================================================================
 async def download_soundcloud_track(url: str, message: types.Message) -> str | None:
-    """Скачивает аудио, конвертирует в MP3 320kbps и возвращает путь к файлу"""
     logger.info("Downloading track")
-    
-    # Шаблон имени файла (пункт 15 ТЗ: в папку downloads/)
+
+    import shutil
+
+    logger.info(f"ffmpeg = {shutil.which('ffmpeg')}")
+    logger.info(f"ffprobe = {shutil.which('ffprobe')}")
+
     outtmpl = os.path.join(DOWNLOADS_DIR, '%(title)s.%(ext)s')
-    
+
     ydl_opts = {
         'format': 'bestaudio/best',
         'outtmpl': outtmpl,
@@ -115,7 +118,7 @@ async def download_soundcloud_track(url: str, message: types.Message) -> str | N
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
-            'preferredquality': '0',
+            'preferredquality': '320',
         }],
     }
 
