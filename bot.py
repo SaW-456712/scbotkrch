@@ -136,7 +136,29 @@ async def download_soundcloud_track(url: str, message: types.Message) -> str | N
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             logger.info("Converting to MP3")
             info = ydl.extract_info(url, download=True)
-            return ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp3'
+
+            mp3_path = ydl.prepare_filename(info).rsplit('.', 1)[0] + '.mp3'
+            
+            title = info.get("title", "Unknown Track")
+            
+            safe_title = "".join(
+                c for c in title
+                if c not in r'\/:*?"<>|'
+            )
+            
+            if FILE_SIGNATURE:
+                new_name = f"{safe_title}{FILE_SIGNATURE}.mp3"
+            else:
+                new_name = f"{safe_title}.mp3"
+            
+            new_path = os.path.join(
+                os.path.dirname(mp3_path),
+                new_name
+            )
+            
+            os.rename(mp3_path, new_path)
+            
+            return new_path
 
     try:
         loop = asyncio.get_event_loop()
